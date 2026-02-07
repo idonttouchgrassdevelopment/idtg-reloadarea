@@ -1,9 +1,26 @@
--- Reload Area Script - Fixed to avoid teleporting and keep player visible
+-- Reload Area Script - focuses on safe local streaming refreshes without side effects
 local cooldownActive = false
-local cooldownSeconds = 15
-local reloadDuration = 10000
+local isReloading = false
+
+local settings = {
+    cooldownSeconds = 15,
+    reloadDurationMs = 8000,
+    focusOffset = 4500.0,
+    collisionAttempts = 24,
+    collisionDelayMs = 200,
+    freezeSafetyTimeoutMs = 15000
+}
 
 RegisterCommand('reloadarea', function()
+    if isReloading then
+        lib.notify({
+            title = 'Reload Area',
+            description = 'A texture refresh is already running.',
+            type = 'error'
+        })
+        return
+    end
+
     if cooldownActive then
         lib.notify({
             title = 'Reload Area',
@@ -14,10 +31,10 @@ RegisterCommand('reloadarea', function()
     end
 
     cooldownActive = true
-    reloadAreaTextures()
-
     CreateThread(function()
-        Wait(cooldownSeconds * 1000)
+        reloadAreaTextures()
+
+        Wait(settings.cooldownSeconds * 1000)
         cooldownActive = false
         lib.notify({
             title = 'Reload Area',
@@ -29,23 +46,107 @@ end)
 
 RegisterKeyMapping('reloadarea', 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
 
-function reloadAreaTextures()
+local function restorePlayerState(state)
+    if not state then return end
+
     local ped = PlayerPedId()
+
+    ClearFocus()
+    ClearHdArea()
+
+    if state.wasFrozen then
+        FreezeEntityPosition(ped, true)
+    else
+        FreezeEntityPosition(ped, false)
+    end
+
+    if state.radarVisible then
+        DisplayRadar(true)
+    else
+        DisplayRadar(false)
+    end
+
+    if state.coords and state.heading then
+        SetEntityCoordsNoOffset(ped, state.coords.x, state.coords.y, state.coords.z, false, false, false)
+        SetEntityHeading(ped, state.heading)
+    end
+end
+
+local function optimizeClientStreaming(originalCoords)
+    local pedBudgetReduced = false
+    local vehicleBudgetReduced = false
+
+    SetReducePedModelBudget(true)
+    pedBudgetReduced = true
+
+    SetReduceVehicleModelBudget(true)
+    vehicleBudgetReduced = true
+
+    -- Flush local world state that commonly causes texture persistence.
+    ClearAllBrokenGlass()
+    ClearHdArea()
+
+    -- Refresh interior textures around the player only.
+    local interior = GetInteriorAtCoords(originalCoords.x, originalCoords.y, originalCoords.z)
+    if interior ~= 0 then
+        PinInteriorInMemory(interior)
+        RefreshInterior(interior)
+    end
+
+    Wait(250)
+
+    if interior ~= 0 then
+        UnpinInterior(interior)
+    end
+
+    if pedBudgetReduced then
+        SetReducePedModelBudget(false)
+    end
+
+    if vehicleBudgetReduced then
+        SetReduceVehicleModelBudget(false)
+    end
+end
+
+function reloadAreaTextures()
+    if isReloading then
+        return
+    end
+
+    isReloading = true
+
+    local ped = PlayerPedId()
+    if ped == 0 then
+        isReloading = false
+        return
+    end
+
     local originalCoords = GetEntityCoords(ped)
     local heading = GetEntityHeading(ped)
 
-    optimizeClientTextures()
+    local state = {
+        wasFrozen = IsEntityPositionFrozen(ped),
+        radarVisible = IsRadarEnabled(),
+        coords = originalCoords,
+        heading = heading
+    }
 
-    -- Move camera focus away instead of teleporting player
-    -- This forces the game to unload textures in the area
-    local tempFocus = vector3(originalCoords.x + 5000.0, originalCoords.y + 5000.0, 0.0)
-    SetFocusArea(tempFocus.x, tempFocus.y, tempFocus.z, 0.0, 0.0, 0.0)
-    
-    -- Freeze player but keep them visible for other players
     FreezeEntityPosition(ped, true)
-    -- Remove SetEntityVisible to keep player visible for other players
     DisplayRadar(false)
-    SetDrawOrigin(originalCoords.x, originalCoords.y, originalCoords.z, 0)
+
+    CreateThread(function()
+        Wait(settings.freezeSafetyTimeoutMs)
+        if isReloading then
+            restorePlayerState(state)
+            isReloading = false
+
+            lib.notify({
+                title = 'Reload Area',
+                description = 'Safety restore triggered. You can try again.',
+                type = 'error'
+            })
+        end
+    end)
 
     lib.notify({
         title = 'Reload Area',
@@ -53,71 +154,42 @@ function reloadAreaTextures()
         type = 'inform'
     })
 
-    Wait(reloadDuration)
+    optimizeClientStreaming(originalCoords)
 
-    -- Restore camera focus to original location
-    ClearFocus()
-    RequestCollisionAtCoord(originalCoords)
-    
-    -- Force collision and texture reload
-    local interior = GetInteriorAtCoords(originalCoords)
-    if interior ~= 0 then RefreshInterior(interior) end
+    -- Move focus far enough to force local stream eviction without moving the player entity.
+    local tempFocus = vector3(
+        originalCoords.x + settings.focusOffset,
+        originalCoords.y + settings.focusOffset,
+        originalCoords.z + 50.0
+    )
 
-    -- Multiple collision requests to ensure proper loading
-    for i = 1, 15 do
-        RequestCollisionAtCoord(originalCoords)
-        Wait(200)
-    end
-
-    -- Wait for collision to load completely
-    local attempts = 0
-    while not HasCollisionLoadedAroundEntity(ped) and attempts < 30 do
-        RequestCollisionAtCoord(originalCoords)
-        Wait(250)
-        attempts += 1
-    end
-
-    -- Clear draw origin and restore player state
-    ClearDrawOrigin()
-    
-    -- Small delay before restoring full functionality
-    Wait(500)
-    
-    -- Restore player state (player was never hidden)
-    FreezeEntityPosition(ped, false)
-    DisplayRadar(true)
-    
-    -- Ensure player is at original coordinates (should be, but just in case)
-    SetEntityCoordsNoOffset(ped, originalCoords.x, originalCoords.y, originalCoords.z, false, false, false)
-    SetEntityHeading(ped, heading)
-    Wait(1000)
-
-    lib.notify({
-        title = 'Reload Area',
-        description = 'Textures refreshed and optimized.',
-        type = 'success'
-    })
-
-    -- sendWebhookLog(originalCoords)
-end
-
-function optimizeClientTextures()
-    SetReducePedModelBudget(true)
-    SetReduceVehicleModelBudget(true)
+    SetFocusArea(tempFocus.x, tempFocus.y, tempFocus.z, 0.0, 0.0, 0.0)
+    Wait(settings.reloadDurationMs)
 
     ClearFocus()
     ClearHdArea()
-    ClearAllBrokenGlass()
-    ClearTimecycleModifier()
-    SetTimecycleModifier("neutral")
-    SetTimecycleModifierStrength(0.0)
 
-    TriggerEvent("graphics:flush")
+    RequestCollisionAtCoord(originalCoords.x, originalCoords.y, originalCoords.z)
 
-    Wait(300)
+    for i = 1, settings.collisionAttempts do
+        RequestCollisionAtCoord(originalCoords.x, originalCoords.y, originalCoords.z)
 
-    SetReducePedModelBudget(false)
-    SetReduceVehicleModelBudget(false)
+        if HasCollisionLoadedAroundEntity(ped) then
+            break
+        end
+
+        Wait(settings.collisionDelayMs)
+    end
+
+    restorePlayerState(state)
+
+    isReloading = false
+
+    lib.notify({
+        title = 'Reload Area',
+        description = 'Textures refreshed and local streaming cleaned up.',
+        type = 'success'
+    })
 end
 
 function sendWebhookLog(coords)
