@@ -4,11 +4,13 @@ local isReloading = false
 
 local settings = {
     cooldownSeconds = 15,
-    reloadDurationMs = 8000,
+    reloadDurationMs = 10000,
     focusOffset = 4500.0,
+    focusZ = 0.0,
     collisionAttempts = 24,
     collisionDelayMs = 200,
-    freezeSafetyTimeoutMs = 15000
+    freezeSafetyTimeoutMs = 15000,
+    aggressiveStreamingFlush = true
 }
 
 RegisterCommand('reloadarea', function()
@@ -86,6 +88,13 @@ local function optimizeClientStreaming(originalCoords)
     ClearAllBrokenGlass()
     ClearHdArea()
 
+    if settings.aggressiveStreamingFlush then
+        ClearTimecycleModifier()
+        SetTimecycleModifier("neutral")
+        SetTimecycleModifierStrength(0.0)
+        TriggerEvent("graphics:flush")
+    end
+
     -- Refresh interior textures around the player only.
     local interior = GetInteriorAtCoords(originalCoords.x, originalCoords.y, originalCoords.z)
     if interior ~= 0 then
@@ -133,6 +142,7 @@ function reloadAreaTextures()
 
     FreezeEntityPosition(ped, true)
     DisplayRadar(false)
+    SetDrawOrigin(originalCoords.x, originalCoords.y, originalCoords.z, 0)
 
     CreateThread(function()
         Wait(settings.freezeSafetyTimeoutMs)
@@ -160,7 +170,7 @@ function reloadAreaTextures()
     local tempFocus = vector3(
         originalCoords.x + settings.focusOffset,
         originalCoords.y + settings.focusOffset,
-        originalCoords.z + 50.0
+        settings.focusZ
     )
 
     SetFocusArea(tempFocus.x, tempFocus.y, tempFocus.z, 0.0, 0.0, 0.0)
@@ -168,6 +178,7 @@ function reloadAreaTextures()
 
     ClearFocus()
     ClearHdArea()
+    ClearDrawOrigin()
 
     RequestCollisionAtCoord(originalCoords.x, originalCoords.y, originalCoords.z)
 
