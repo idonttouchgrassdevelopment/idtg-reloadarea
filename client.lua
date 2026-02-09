@@ -1,6 +1,7 @@
 -- Reload Area Script - focuses on safe local streaming refreshes without side effects
 local cooldownActive = false
 local isReloading = false
+local teleportCooldownActive = false
 
 local settings = {
     cooldownSeconds = 15,
@@ -14,7 +15,17 @@ local settings = {
     screenFadeMs = 500,
     surfaceProbeStartOffset = 200.0,
     surfaceProbeStep = 100.0,
-    surfaceProbeAttempts = 8
+    surfaceProbeAttempts = 8,
+    safeReturn = {
+        enabled = true,
+        cooldownSeconds = 30,
+        coords = {
+            x = 0.0,
+            y = 0.0,
+            z = 72.0
+        },
+        heading = 0.0
+    }
 }
 
 local function setBlackScreen(enabled)
@@ -140,6 +151,67 @@ RegisterCommand('surface', function()
 end)
 
 RegisterKeyMapping('surface', 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
+
+RegisterCommand('teleport', function()
+    local ped = PlayerPedId()
+    if ped == 0 then
+        return
+    end
+
+    if teleportCooldownActive then
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'Teleport is on cooldown. Please wait before using it again.',
+            type = 'error'
+        })
+        return
+    end
+
+    local destination = settings.safeReturn.coords
+    local destinationHeading = settings.safeReturn.heading
+
+    teleportCooldownActive = true
+    CreateThread(function()
+        Wait(settings.safeReturn.cooldownSeconds * 1000)
+        teleportCooldownActive = false
+    end)
+
+    if settings.safeReturn.enabled then
+        RequestCollisionAtCoord(destination.x, destination.y, destination.z)
+        SetEntityCoordsNoOffset(ped, destination.x, destination.y, destination.z, false, false, false)
+        SetEntityHeading(ped, destinationHeading)
+
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'Teleported you back to the configured safe area.',
+            type = 'success'
+        })
+        return
+    end
+
+    local coords = GetEntityCoords(ped)
+    local groundZ = findGroundZ(coords)
+
+    if not groundZ then
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'No safe area configured and no surface found nearby.',
+            type = 'error'
+        })
+        return
+    end
+
+    RequestCollisionAtCoord(coords.x, coords.y, groundZ)
+    SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+
+    lib.notify({
+        title = 'Safe Zone Teleport',
+        description = 'No safe area configured, moved you to the nearest surface instead.',
+        type = 'inform'
+    })
+end)
+
+RegisterKeyMapping('teleport', 'Teleport to a configured safe area if you are under the map', 'keyboard', '')
 
 local function optimizeClientStreaming(originalCoords)
     local pedBudgetReduced = false
