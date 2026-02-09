@@ -14,6 +14,7 @@ Config = {
     collisionDelayMs = 200,
     freezeSafetyTimeoutMs = 15000,
     aggressiveStreamingFlush = true,
+    aggressiveSurfaceFlush = true,
     screenFadeMs = 500,
     surfaceProbeStartOffset = 200.0,
     surfaceProbeStep = 100.0,
