@@ -129,7 +129,9 @@ local function findGroundZ(coords)
     return nil
 end
 
-local function optimizeClientStreaming(originalCoords)
+local function optimizeClientStreaming(originalCoords, options)
+    options = options or {}
+
     local pedBudgetReduced = false
     local vehicleBudgetReduced = false
 
@@ -143,7 +145,9 @@ local function optimizeClientStreaming(originalCoords)
     ClearAllBrokenGlass()
     ClearHdArea()
 
-    if settings.aggressiveStreamingFlush then
+    local useAggressiveFlush = options.forceAggressiveFlush or settings.aggressiveStreamingFlush
+
+    if useAggressiveFlush then
         ClearTimecycleModifier()
         SetTimecycleModifier('neutral')
         SetTimecycleModifierStrength(0.0)
@@ -225,7 +229,9 @@ RegisterCommand(getCommandName('surface'), function()
     setBlackScreen(true, settings.surfaceTeleportFadeMs)
 
     if settings.optimizeStreamingOnSurface then
-        optimizeClientStreaming(coords)
+        optimizeClientStreaming(coords, {
+            forceAggressiveFlush = settings.aggressiveSurfaceFlush
+        })
     end
 
     local targetZ = groundZ + (settings.surfaceLiftHeight or 1.0)
