@@ -1,9 +1,18 @@
 -- Reload Area Script - focuses on safe local streaming refreshes without side effects
-local cooldownActive = false
 local isReloading = false
+local cooldowns = {}
 
 local settings = {
-    cooldownSeconds = 15,
+    commands = {
+        reloadarea = 'reloadarea',
+        surface = 'surface',
+        teleport = 'teleport'
+    },
+    cooldownSeconds = {
+        reloadarea = 15,
+        surface = 5,
+        teleport = 20
+    },
     reloadDurationMs = 10000,
     focusOffset = 4500.0,
     focusZ = 0.0,
@@ -21,6 +30,37 @@ local settings = {
         heading = 0.0
     }
 }
+
+local function getCommandName(commandKey)
+    return settings.commands[commandKey] or commandKey
+end
+
+local function getCooldownMs(commandKey)
+    local seconds = settings.cooldownSeconds[commandKey] or 0
+    return math.max(0, seconds) * 1000
+end
+
+local function isOnCooldown(commandKey)
+    local now = GetGameTimer()
+    local expiresAt = cooldowns[commandKey]
+
+    if not expiresAt or expiresAt <= now then
+        cooldowns[commandKey] = nil
+        return false, 0
+    end
+
+    local secondsLeft = math.ceil((expiresAt - now) / 1000)
+    return true, secondsLeft
+end
+
+local function startCooldown(commandKey)
+    local cooldownMs = getCooldownMs(commandKey)
+    if cooldownMs <= 0 then
+        return
+    end
+
+    cooldowns[commandKey] = GetGameTimer() + cooldownMs
+end
 
 local function setBlackScreen(enabled)
     if enabled then
@@ -40,7 +80,7 @@ local function setBlackScreen(enabled)
     end
 end
 
-RegisterCommand('reloadarea', function()
+RegisterCommand(getCommandName('reloadarea'), function()
     if isReloading then
         lib.notify({
             title = 'Reload Area',
@@ -50,30 +90,23 @@ RegisterCommand('reloadarea', function()
         return
     end
 
-    if cooldownActive then
+    local onCooldown, secondsLeft = isOnCooldown('reloadarea')
+    if onCooldown then
         lib.notify({
             title = 'Reload Area',
-            description = 'Please wait for cooldown to finish.',
+            description = ('Please wait %ss before using this again.'):format(secondsLeft),
             type = 'error'
         })
         return
     end
 
-    cooldownActive = true
+    startCooldown('reloadarea')
     CreateThread(function()
         reloadAreaTextures()
-
-        Wait(settings.cooldownSeconds * 1000)
-        cooldownActive = false
-        lib.notify({
-            title = 'Reload Area',
-            description = 'Cooldown expired. You can reload textures again.',
-            type = 'inform'
-        })
     end)
 end)
 
-RegisterKeyMapping('reloadarea', 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
+RegisterKeyMapping(getCommandName('reloadarea'), 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
 
 local function restorePlayerState(state)
     if not state then return end
@@ -116,9 +149,19 @@ local function findGroundZ(coords)
     return nil
 end
 
-RegisterCommand('surface', function()
+RegisterCommand(getCommandName('surface'), function()
     local ped = PlayerPedId()
     if ped == 0 then
+        return
+    end
+
+    local onCooldown, secondsLeft = isOnCooldown('surface')
+    if onCooldown then
+        lib.notify({
+            title = 'Surface Rescue',
+            description = ('Please wait %ss before using this again.'):format(secondsLeft),
+            type = 'error'
+        })
         return
     end
 
@@ -136,6 +179,7 @@ RegisterCommand('surface', function()
 
     RequestCollisionAtCoord(coords.x, coords.y, groundZ)
     SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+    startCooldown('surface')
 
     lib.notify({
         title = 'Surface Rescue',
@@ -144,11 +188,21 @@ RegisterCommand('surface', function()
     })
 end)
 
-RegisterKeyMapping('surface', 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
+RegisterKeyMapping(getCommandName('surface'), 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
 
-RegisterCommand('teleport', function()
+RegisterCommand(getCommandName('teleport'), function()
     local ped = PlayerPedId()
     if ped == 0 then
+        return
+    end
+
+    local onCooldown, secondsLeft = isOnCooldown('teleport')
+    if onCooldown then
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = ('Please wait %ss before using this again.'):format(secondsLeft),
+            type = 'error'
+        })
         return
     end
 
@@ -159,6 +213,7 @@ RegisterCommand('teleport', function()
         RequestCollisionAtCoord(destination.x, destination.y, destination.z)
         SetEntityCoordsNoOffset(ped, destination.x, destination.y, destination.z, false, false, false)
         SetEntityHeading(ped, destinationHeading)
+        startCooldown('teleport')
 
         lib.notify({
             title = 'Safe Zone Teleport',
@@ -182,6 +237,7 @@ RegisterCommand('teleport', function()
 
     RequestCollisionAtCoord(coords.x, coords.y, groundZ)
     SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+    startCooldown('teleport')
 
     lib.notify({
         title = 'Safe Zone Teleport',
@@ -190,7 +246,7 @@ RegisterCommand('teleport', function()
     })
 end)
 
-RegisterKeyMapping('teleport', 'Teleport to a configured safe area if you are under the map', 'keyboard', '')
+RegisterKeyMapping(getCommandName('teleport'), 'Teleport to a configured safe area if you are under the map', 'keyboard', '')
 
 local function optimizeClientStreaming(originalCoords)
     local pedBudgetReduced = false
