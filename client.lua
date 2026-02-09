@@ -10,8 +10,30 @@ local settings = {
     collisionAttempts = 24,
     collisionDelayMs = 200,
     freezeSafetyTimeoutMs = 15000,
-    aggressiveStreamingFlush = true
+    aggressiveStreamingFlush = true,
+    screenFadeMs = 500,
+    surfaceProbeStartOffset = 200.0,
+    surfaceProbeStep = 100.0,
+    surfaceProbeAttempts = 8
 }
+
+local function setBlackScreen(enabled)
+    if enabled then
+        if not IsScreenFadingOut() and not IsScreenFadedOut() then
+            DoScreenFadeOut(settings.screenFadeMs)
+        end
+
+        local timeoutAt = GetGameTimer() + settings.screenFadeMs + 1000
+        while not IsScreenFadedOut() and GetGameTimer() < timeoutAt do
+            Wait(0)
+        end
+        return
+    end
+
+    if IsScreenFadedOut() or IsScreenFadingOut() then
+        DoScreenFadeIn(settings.screenFadeMs)
+    end
+end
 
 RegisterCommand('reloadarea', function()
     if isReloading then
@@ -72,7 +94,52 @@ local function restorePlayerState(state)
         SetEntityCoordsNoOffset(ped, state.coords.x, state.coords.y, state.coords.z, false, false, false)
         SetEntityHeading(ped, state.heading)
     end
+
+    setBlackScreen(false)
 end
+
+local function findGroundZ(coords)
+    for i = 1, settings.surfaceProbeAttempts do
+        local probeZ = coords.z + settings.surfaceProbeStartOffset + ((i - 1) * settings.surfaceProbeStep)
+        local foundGround, groundZ = GetGroundZFor_3dCoord(coords.x, coords.y, probeZ, false)
+
+        if foundGround then
+            return groundZ
+        end
+    end
+
+    return nil
+end
+
+RegisterCommand('surface', function()
+    local ped = PlayerPedId()
+    if ped == 0 then
+        return
+    end
+
+    local coords = GetEntityCoords(ped)
+    local groundZ = findGroundZ(coords)
+
+    if not groundZ then
+        lib.notify({
+            title = 'Surface Rescue',
+            description = 'Could not find safe ground. Try again in a different spot.',
+            type = 'error'
+        })
+        return
+    end
+
+    RequestCollisionAtCoord(coords.x, coords.y, groundZ)
+    SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+
+    lib.notify({
+        title = 'Surface Rescue',
+        description = 'Moved you back to the nearest surface level.',
+        type = 'success'
+    })
+end)
+
+RegisterKeyMapping('surface', 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
 
 local function optimizeClientStreaming(originalCoords)
     local pedBudgetReduced = false
@@ -143,6 +210,7 @@ function reloadAreaTextures()
     FreezeEntityPosition(ped, true)
     DisplayRadar(false)
     SetDrawOrigin(originalCoords.x, originalCoords.y, originalCoords.z, 0)
+    setBlackScreen(true)
 
     CreateThread(function()
         Wait(settings.freezeSafetyTimeoutMs)
