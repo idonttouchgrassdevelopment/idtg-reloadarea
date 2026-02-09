@@ -14,7 +14,12 @@ local settings = {
     screenFadeMs = 500,
     surfaceProbeStartOffset = 200.0,
     surfaceProbeStep = 100.0,
-    surfaceProbeAttempts = 8
+    surfaceProbeAttempts = 8,
+    safeReturn = {
+        enabled = false,
+        coords = vector3(0.0, 0.0, 72.0),
+        heading = 0.0
+    }
 }
 
 local function setBlackScreen(enabled)
@@ -140,6 +145,52 @@ RegisterCommand('surface', function()
 end)
 
 RegisterKeyMapping('surface', 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
+
+RegisterCommand('teleport', function()
+    local ped = PlayerPedId()
+    if ped == 0 then
+        return
+    end
+
+    local destination = settings.safeReturn.coords
+    local destinationHeading = settings.safeReturn.heading
+
+    if settings.safeReturn.enabled then
+        RequestCollisionAtCoord(destination.x, destination.y, destination.z)
+        SetEntityCoordsNoOffset(ped, destination.x, destination.y, destination.z, false, false, false)
+        SetEntityHeading(ped, destinationHeading)
+
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'Teleported you back to the configured safe area.',
+            type = 'success'
+        })
+        return
+    end
+
+    local coords = GetEntityCoords(ped)
+    local groundZ = findGroundZ(coords)
+
+    if not groundZ then
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'No safe area configured and no surface found nearby.',
+            type = 'error'
+        })
+        return
+    end
+
+    RequestCollisionAtCoord(coords.x, coords.y, groundZ)
+    SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+
+    lib.notify({
+        title = 'Safe Zone Teleport',
+        description = 'No safe area configured, moved you to the nearest surface instead.',
+        type = 'inform'
+    })
+end)
+
+RegisterKeyMapping('teleport', 'Teleport to a configured safe area if you are under the map', 'keyboard', '')
 
 local function optimizeClientStreaming(originalCoords)
     local pedBudgetReduced = false
