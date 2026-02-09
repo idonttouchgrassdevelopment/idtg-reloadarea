@@ -1,6 +1,25 @@
 -- Reload Area Script - focuses on safe local streaming refreshes without side effects
 local cooldownActive = false
 local isReloading = false
+local teleportCooldownActive = false
+
+local function getConfigValue(path, fallback)
+    local current = Config
+
+    for _, key in ipairs(path) do
+        if type(current) ~= 'table' then
+            return fallback
+        end
+
+        current = current[key]
+    end
+
+    if current == nil then
+        return fallback
+    end
+
+    return current
+end
 
 local settings = {
     cooldownSeconds = 15,
@@ -14,7 +33,39 @@ local settings = {
     screenFadeMs = 500,
     surfaceProbeStartOffset = 200.0,
     surfaceProbeStep = 100.0,
-    surfaceProbeAttempts = 8
+    surfaceProbeAttempts = 8,
+    commands = {
+        reloadArea = getConfigValue({ 'commands', 'reloadArea' }, 'reloadarea'),
+        surfaceRescue = getConfigValue({ 'commands', 'surfaceRescue' }, 'surface'),
+        safeTeleport = getConfigValue({ 'commands', 'safeTeleport' }, 'teleport')
+    },
+    keyMappings = {
+        reloadArea = {
+            description = getConfigValue({ 'keyMappings', 'reloadArea', 'description' }, 'Reload Nearby Textures (Client-Side Keybind)'),
+            defaultMapper = getConfigValue({ 'keyMappings', 'reloadArea', 'defaultMapper' }, 'keyboard'),
+            defaultKey = getConfigValue({ 'keyMappings', 'reloadArea', 'defaultKey' }, '')
+        },
+        surfaceRescue = {
+            description = getConfigValue({ 'keyMappings', 'surfaceRescue', 'description' }, 'Teleport to nearest surface if you fell through the map'),
+            defaultMapper = getConfigValue({ 'keyMappings', 'surfaceRescue', 'defaultMapper' }, 'keyboard'),
+            defaultKey = getConfigValue({ 'keyMappings', 'surfaceRescue', 'defaultKey' }, '')
+        },
+        safeTeleport = {
+            description = getConfigValue({ 'keyMappings', 'safeTeleport', 'description' }, 'Teleport to a configured safe area if you are under the map'),
+            defaultMapper = getConfigValue({ 'keyMappings', 'safeTeleport', 'defaultMapper' }, 'keyboard'),
+            defaultKey = getConfigValue({ 'keyMappings', 'safeTeleport', 'defaultKey' }, '')
+        }
+    },
+    safeReturn = {
+        enabled = getConfigValue({ 'safeReturn', 'enabled' }, true),
+        cooldownSeconds = getConfigValue({ 'safeReturn', 'cooldownSeconds' }, 30),
+        coords = {
+            x = getConfigValue({ 'safeReturn', 'coords', 'x' }, 0.0),
+            y = getConfigValue({ 'safeReturn', 'coords', 'y' }, 0.0),
+            z = getConfigValue({ 'safeReturn', 'coords', 'z' }, 72.0)
+        },
+        heading = getConfigValue({ 'safeReturn', 'heading' }, 0.0)
+    }
 }
 
 local function setBlackScreen(enabled)
@@ -35,7 +86,7 @@ local function setBlackScreen(enabled)
     end
 end
 
-RegisterCommand('reloadarea', function()
+RegisterCommand(settings.commands.reloadArea, function()
     if isReloading then
         lib.notify({
             title = 'Reload Area',
@@ -68,7 +119,7 @@ RegisterCommand('reloadarea', function()
     end)
 end)
 
-RegisterKeyMapping('reloadarea', 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
+RegisterKeyMapping(settings.commands.reloadArea, settings.keyMappings.reloadArea.description, settings.keyMappings.reloadArea.defaultMapper, settings.keyMappings.reloadArea.defaultKey)
 
 local function restorePlayerState(state)
     if not state then return end
@@ -98,6 +149,15 @@ local function restorePlayerState(state)
     setBlackScreen(false)
 end
 
+local function startTeleportCooldown()
+    teleportCooldownActive = true
+
+    CreateThread(function()
+        Wait(settings.safeReturn.cooldownSeconds * 1000)
+        teleportCooldownActive = false
+    end)
+end
+
 local function findGroundZ(coords)
     for i = 1, settings.surfaceProbeAttempts do
         local probeZ = coords.z + settings.surfaceProbeStartOffset + ((i - 1) * settings.surfaceProbeStep)
@@ -111,7 +171,7 @@ local function findGroundZ(coords)
     return nil
 end
 
-RegisterCommand('surface', function()
+RegisterCommand(settings.commands.surfaceRescue, function()
     local ped = PlayerPedId()
     if ped == 0 then
         return
@@ -139,7 +199,64 @@ RegisterCommand('surface', function()
     })
 end)
 
-RegisterKeyMapping('surface', 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
+RegisterKeyMapping(settings.commands.surfaceRescue, settings.keyMappings.surfaceRescue.description, settings.keyMappings.surfaceRescue.defaultMapper, settings.keyMappings.surfaceRescue.defaultKey)
+
+RegisterCommand(settings.commands.safeTeleport, function()
+    local ped = PlayerPedId()
+    if ped == 0 then
+        return
+    end
+
+    if teleportCooldownActive then
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'Teleport is on cooldown. Please wait before using it again.',
+            type = 'error'
+        })
+        return
+    end
+
+    local destination = settings.safeReturn.coords
+    local destinationHeading = settings.safeReturn.heading
+
+    if settings.safeReturn.enabled then
+        startTeleportCooldown()
+        RequestCollisionAtCoord(destination.x, destination.y, destination.z)
+        SetEntityCoordsNoOffset(ped, destination.x, destination.y, destination.z, false, false, false)
+        SetEntityHeading(ped, destinationHeading)
+
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'Teleported you back to the configured safe area.',
+            type = 'success'
+        })
+        return
+    end
+
+    local coords = GetEntityCoords(ped)
+    local groundZ = findGroundZ(coords)
+
+    if not groundZ then
+        lib.notify({
+            title = 'Safe Zone Teleport',
+            description = 'No safe area configured and no surface found nearby.',
+            type = 'error'
+        })
+        return
+    end
+
+    startTeleportCooldown()
+    RequestCollisionAtCoord(coords.x, coords.y, groundZ)
+    SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+
+    lib.notify({
+        title = 'Safe Zone Teleport',
+        description = 'No safe area configured, moved you to the nearest surface instead.',
+        type = 'inform'
+    })
+end)
+
+RegisterKeyMapping(settings.commands.safeTeleport, settings.keyMappings.safeTeleport.description, settings.keyMappings.safeTeleport.defaultMapper, settings.keyMappings.safeTeleport.defaultKey)
 
 local function optimizeClientStreaming(originalCoords)
     local pedBudgetReduced = false
