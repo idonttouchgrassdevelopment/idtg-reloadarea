@@ -1,34 +1,49 @@
 -- Reload Area Script - focuses on safe local streaming refreshes without side effects
-local cooldownActive = false
 local isReloading = false
+local cooldowns = {}
 
-local settings = {
-    cooldownSeconds = 15,
-    reloadDurationMs = 10000,
-    focusOffset = 4500.0,
-    focusZ = 0.0,
-    collisionAttempts = 24,
-    collisionDelayMs = 200,
-    freezeSafetyTimeoutMs = 15000,
-    aggressiveStreamingFlush = true,
-    screenFadeMs = 500,
-    surfaceProbeStartOffset = 200.0,
-    surfaceProbeStep = 100.0,
-    surfaceProbeAttempts = 8,
-    safeReturn = {
-        enabled = false,
-        coords = vector3(0.0, 0.0, 72.0),
-        heading = 0.0
-    }
-}
+local settings = Config or {}
+
+local function getCommandName(commandKey)
+    local commands = settings.commands or {}
+    return commands[commandKey] or commandKey
+end
+
+local function getCooldownMs(commandKey)
+    local cooldownConfig = settings.cooldownSeconds or {}
+    local seconds = cooldownConfig[commandKey] or 0
+    return math.max(0, seconds) * 1000
+end
+
+local function isOnCooldown(commandKey)
+    local now = GetGameTimer()
+    local expiresAt = cooldowns[commandKey]
+
+    if not expiresAt or expiresAt <= now then
+        cooldowns[commandKey] = nil
+        return false, 0
+    end
+
+    local secondsLeft = math.ceil((expiresAt - now) / 1000)
+    return true, secondsLeft
+end
+
+local function startCooldown(commandKey)
+    local cooldownMs = getCooldownMs(commandKey)
+    if cooldownMs <= 0 then
+        return
+    end
+
+    cooldowns[commandKey] = GetGameTimer() + cooldownMs
+end
 
 local function setBlackScreen(enabled)
     if enabled then
         if not IsScreenFadingOut() and not IsScreenFadedOut() then
-            DoScreenFadeOut(settings.screenFadeMs)
+            DoScreenFadeOut(settings.screenFadeMs or 500)
         end
 
-        local timeoutAt = GetGameTimer() + settings.screenFadeMs + 1000
+        local timeoutAt = GetGameTimer() + (settings.screenFadeMs or 500) + 1000
         while not IsScreenFadedOut() and GetGameTimer() < timeoutAt do
             Wait(0)
         end
@@ -36,11 +51,11 @@ local function setBlackScreen(enabled)
     end
 
     if IsScreenFadedOut() or IsScreenFadingOut() then
-        DoScreenFadeIn(settings.screenFadeMs)
+        DoScreenFadeIn(settings.screenFadeMs or 500)
     end
 end
 
-RegisterCommand('reloadarea', function()
+RegisterCommand(getCommandName('reloadarea'), function()
     if isReloading then
         lib.notify({
             title = 'Reload Area',
@@ -50,30 +65,23 @@ RegisterCommand('reloadarea', function()
         return
     end
 
-    if cooldownActive then
+    local onCooldown, secondsLeft = isOnCooldown('reloadarea')
+    if onCooldown then
         lib.notify({
             title = 'Reload Area',
-            description = 'Please wait for cooldown to finish.',
+            description = ('Please wait %ss before using this again.'):format(secondsLeft),
             type = 'error'
         })
         return
     end
 
-    cooldownActive = true
+    startCooldown('reloadarea')
     CreateThread(function()
         reloadAreaTextures()
-
-        Wait(settings.cooldownSeconds * 1000)
-        cooldownActive = false
-        lib.notify({
-            title = 'Reload Area',
-            description = 'Cooldown expired. You can reload textures again.',
-            type = 'inform'
-        })
     end)
 end)
 
-RegisterKeyMapping('reloadarea', 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
+RegisterKeyMapping(getCommandName('reloadarea'), 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
 
 local function restorePlayerState(state)
     if not state then return end
@@ -104,8 +112,8 @@ local function restorePlayerState(state)
 end
 
 local function findGroundZ(coords)
-    for i = 1, settings.surfaceProbeAttempts do
-        local probeZ = coords.z + settings.surfaceProbeStartOffset + ((i - 1) * settings.surfaceProbeStep)
+    for i = 1, (settings.surfaceProbeAttempts or 8) do
+        local probeZ = coords.z + (settings.surfaceProbeStartOffset or 200.0) + ((i - 1) * (settings.surfaceProbeStep or 100.0))
         local foundGround, groundZ = GetGroundZFor_3dCoord(coords.x, coords.y, probeZ, false)
 
         if foundGround then
@@ -116,9 +124,19 @@ local function findGroundZ(coords)
     return nil
 end
 
-RegisterCommand('surface', function()
+RegisterCommand(getCommandName('surface'), function()
     local ped = PlayerPedId()
     if ped == 0 then
+        return
+    end
+
+    local onCooldown, secondsLeft = isOnCooldown('surface')
+    if onCooldown then
+        lib.notify({
+            title = 'Surface Rescue',
+            description = ('Please wait %ss before using this again.'):format(secondsLeft),
+            type = 'error'
+        })
         return
     end
 
@@ -136,6 +154,7 @@ RegisterCommand('surface', function()
 
     RequestCollisionAtCoord(coords.x, coords.y, groundZ)
     SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
+    startCooldown('surface')
 
     lib.notify({
         title = 'Surface Rescue',
@@ -144,53 +163,8 @@ RegisterCommand('surface', function()
     })
 end)
 
-RegisterKeyMapping('surface', 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
+RegisterKeyMapping(getCommandName('surface'), 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
 
-RegisterCommand('teleport', function()
-    local ped = PlayerPedId()
-    if ped == 0 then
-        return
-    end
-
-    local destination = settings.safeReturn.coords
-    local destinationHeading = settings.safeReturn.heading
-
-    if settings.safeReturn.enabled then
-        RequestCollisionAtCoord(destination.x, destination.y, destination.z)
-        SetEntityCoordsNoOffset(ped, destination.x, destination.y, destination.z, false, false, false)
-        SetEntityHeading(ped, destinationHeading)
-
-        lib.notify({
-            title = 'Safe Zone Teleport',
-            description = 'Teleported you back to the configured safe area.',
-            type = 'success'
-        })
-        return
-    end
-
-    local coords = GetEntityCoords(ped)
-    local groundZ = findGroundZ(coords)
-
-    if not groundZ then
-        lib.notify({
-            title = 'Safe Zone Teleport',
-            description = 'No safe area configured and no surface found nearby.',
-            type = 'error'
-        })
-        return
-    end
-
-    RequestCollisionAtCoord(coords.x, coords.y, groundZ)
-    SetEntityCoordsNoOffset(ped, coords.x, coords.y, groundZ + 1.0, false, false, false)
-
-    lib.notify({
-        title = 'Safe Zone Teleport',
-        description = 'No safe area configured, moved you to the nearest surface instead.',
-        type = 'inform'
-    })
-end)
-
-RegisterKeyMapping('teleport', 'Teleport to a configured safe area if you are under the map', 'keyboard', '')
 
 local function optimizeClientStreaming(originalCoords)
     local pedBudgetReduced = false
@@ -206,7 +180,7 @@ local function optimizeClientStreaming(originalCoords)
     ClearAllBrokenGlass()
     ClearHdArea()
 
-    if settings.aggressiveStreamingFlush then
+    if settings.aggressiveStreamingFlush ~= false then
         ClearTimecycleModifier()
         SetTimecycleModifier("neutral")
         SetTimecycleModifierStrength(0.0)
@@ -264,7 +238,7 @@ function reloadAreaTextures()
     setBlackScreen(true)
 
     CreateThread(function()
-        Wait(settings.freezeSafetyTimeoutMs)
+        Wait(settings.freezeSafetyTimeoutMs or 15000)
         if isReloading then
             restorePlayerState(state)
             isReloading = false
@@ -287,13 +261,13 @@ function reloadAreaTextures()
 
     -- Move focus far enough to force local stream eviction without moving the player entity.
     local tempFocus = vector3(
-        originalCoords.x + settings.focusOffset,
-        originalCoords.y + settings.focusOffset,
-        settings.focusZ
+        originalCoords.x + (settings.focusOffset or 4500.0),
+        originalCoords.y + (settings.focusOffset or 4500.0),
+        (settings.focusZ or 0.0)
     )
 
     SetFocusArea(tempFocus.x, tempFocus.y, tempFocus.z, 0.0, 0.0, 0.0)
-    Wait(settings.reloadDurationMs)
+    Wait(settings.reloadDurationMs or 10000)
 
     ClearFocus()
     ClearHdArea()
@@ -301,14 +275,14 @@ function reloadAreaTextures()
 
     RequestCollisionAtCoord(originalCoords.x, originalCoords.y, originalCoords.z)
 
-    for i = 1, settings.collisionAttempts do
+    for i = 1, (settings.collisionAttempts or 24) do
         RequestCollisionAtCoord(originalCoords.x, originalCoords.y, originalCoords.z)
 
         if HasCollisionLoadedAroundEntity(ped) then
             break
         end
 
-        Wait(settings.collisionDelayMs)
+        Wait(settings.collisionDelayMs or 200)
     end
 
     restorePlayerState(state)
