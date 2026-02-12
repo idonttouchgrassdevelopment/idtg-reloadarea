@@ -5,8 +5,35 @@ local cooldowns = {}
 
 local settings = Config or {}
 
+local function shouldRegisterKeyMappings()
+    return settings.enableKeyMappings == true
+end
+
+local function toMenuText(value, fallback)
+    if type(value) == 'string' then
+        local trimmed = value:gsub('^%s+', ''):gsub('%s+$', '')
+        if trimmed ~= '' then
+            return trimmed
+        end
+    end
+
+    return fallback
+end
+
 local function getCommandName(commandKey)
-    return (settings.commands and settings.commands[commandKey]) or commandKey
+    local configured = settings.commands and settings.commands[commandKey]
+    return toMenuText(configured, commandKey)
+end
+
+local function buildKeyMappingDescription(baseDescription)
+    local categoryLabel = toMenuText(settings.keyMappingCategoryLabel, 'N/A')
+    local description = toMenuText(baseDescription, 'N/A')
+
+    if settings.mergeKeyMappingDescriptions == true then
+        return categoryLabel
+    end
+
+    return ('[%s] %s'):format(categoryLabel, description)
 end
 
 local function getCooldownMs(commandKey)
@@ -82,7 +109,14 @@ RegisterCommand(getCommandName('reloadarea'), function()
     end)
 end)
 
-RegisterKeyMapping(getCommandName('reloadarea'), 'Reload Nearby Textures (Client-Side Keybind)', 'keyboard', '')
+if shouldRegisterKeyMappings() then
+    RegisterKeyMapping(
+        getCommandName('reloadarea'),
+        buildKeyMappingDescription('Reload Nearby Textures (Client-Side Keybind)'),
+        'keyboard',
+        ''
+    )
+end
 
 local function restorePlayerState(state)
     if not state then return end
@@ -261,7 +295,14 @@ RegisterCommand(getCommandName('surface'), function()
     isSurfaceRescuing = false
 end)
 
-RegisterKeyMapping(getCommandName('surface'), 'Teleport to nearest surface if you fell through the map', 'keyboard', '')
+if shouldRegisterKeyMappings() then
+    RegisterKeyMapping(
+        getCommandName('surface'),
+        buildKeyMappingDescription('Teleport to nearest surface if you fell through the map'),
+        'keyboard',
+        ''
+    )
+end
 
 function reloadAreaTextures()
     if isReloading then

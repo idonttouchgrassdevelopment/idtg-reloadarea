@@ -22,5 +22,17 @@ Config = {
     surfaceLiftHeight = 1.0,
     surfaceCollisionWaitMs = 3000,
     surfaceTeleportFadeMs = 350,
-    optimizeStreamingOnSurface = false
+    optimizeStreamingOnSurface = false,
+
+    -- Keybind entries can clutter the pause-menu legend in servers with many scripts.
+    -- Keep this off by default; set to true if you want these commands listed there.
+    enableKeyMappings = false,
+
+    -- Shared label used for keybind entries shown in menu/legend.
+    -- Keep as a normal string; invalid values safely fall back to 'N/A'.
+    keyMappingCategoryLabel = 'N/A',
+
+    -- When true, all keybind entries use only the shared category label text.
+    -- This keeps related departments grouped together under one visible category name.
+    mergeKeyMappingDescriptions = true
 }
