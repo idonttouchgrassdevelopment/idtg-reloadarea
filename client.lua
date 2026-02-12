@@ -132,15 +132,6 @@ end
 local function optimizeClientStreaming(originalCoords, options)
     options = options or {}
 
-    local pedBudgetReduced = false
-    local vehicleBudgetReduced = false
-
-    SetReducePedModelBudget(true)
-    pedBudgetReduced = true
-
-    SetReduceVehicleModelBudget(true)
-    vehicleBudgetReduced = true
-
     -- Flush local world state that commonly causes texture persistence.
     ClearAllBrokenGlass()
     ClearHdArea()
@@ -167,13 +158,6 @@ local function optimizeClientStreaming(originalCoords, options)
         UnpinInterior(interior)
     end
 
-    if pedBudgetReduced then
-        SetReducePedModelBudget(false)
-    end
-
-    if vehicleBudgetReduced then
-        SetReduceVehicleModelBudget(false)
-    end
 end
 
 RegisterCommand(getCommandName('surface'), function()

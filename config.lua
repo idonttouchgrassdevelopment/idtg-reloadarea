@@ -22,5 +22,5 @@ Config = {
     surfaceLiftHeight = 1.0,
     surfaceCollisionWaitMs = 3000,
     surfaceTeleportFadeMs = 350,
-    optimizeStreamingOnSurface = true
+    optimizeStreamingOnSurface = false
 }
